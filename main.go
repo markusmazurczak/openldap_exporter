@@ -21,7 +21,6 @@ import (
 	"github.com/tomcz/gotools/maps"
 	"github.com/tomcz/gotools/quiet"
 	"github.com/urfave/cli/v2"
-	"github.com/urfave/cli/v2/altsrc"
 	"gopkg.in/ldap.v2"
 )
 
@@ -35,7 +34,6 @@ const (
 	metrics           = "metrPath"
 	jsonLog           = "jsonLog"
 	webCfgFile        = "webCfgFile"
-	config            = "config"
 	replicationObject = "replicationObject"
 )
 
@@ -43,70 +41,65 @@ var showStop bool
 
 func main() {
 	flags := []cli.Flag{
-		altsrc.NewStringFlag(&cli.StringFlag{
+		&cli.StringFlag{
 			Name:    promAddr,
 			Value:   ":9330",
 			Usage:   "Bind address for Prometheus HTTP metrics server",
 			EnvVars: []string{"PROM_ADDR"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    metrics,
 			Value:   "/metrics",
 			Usage:   "Path on which to expose Prometheus metrics",
 			EnvVars: []string{"METRICS_PATH"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    ldapNet,
 			Value:   "tcp",
 			Usage:   "Network of OpenLDAP server",
 			EnvVars: []string{"LDAP_NET"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    ldapAddr,
 			Value:   "localhost:389",
 			Usage:   "Address and port of OpenLDAP server",
 			EnvVars: []string{"LDAP_ADDR"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    ldapUser,
 			Usage:   "OpenLDAP bind username (optional)",
 			EnvVars: []string{"LDAP_USER"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    ldapPass,
 			Usage:   "OpenLDAP bind password (optional)",
 			EnvVars: []string{"LDAP_PASS"},
-		}),
-		altsrc.NewDurationFlag(&cli.DurationFlag{
+		},
+		&cli.DurationFlag{
 			Name:    interval,
 			Value:   30 * time.Second,
 			Usage:   "Scrape interval",
 			EnvVars: []string{"INTERVAL"},
-		}),
-		altsrc.NewBoolFlag(&cli.BoolFlag{
+		},
+		&cli.BoolFlag{
 			Name:    jsonLog,
 			Value:   false,
 			Usage:   "Output logs in JSON format",
 			EnvVars: []string{"JSON_LOG"},
-		}),
-		altsrc.NewStringFlag(&cli.StringFlag{
+		},
+		&cli.StringFlag{
 			Name:    webCfgFile,
 			Usage:   "Prometheus metrics web config `FILE` (optional)",
 			EnvVars: []string{"WEB_CFG_FILE"},
-		}),
-		altsrc.NewStringSliceFlag(&cli.StringSliceFlag{
+		},
+		&cli.StringSliceFlag{
 			Name:  replicationObject,
-			Usage: "Object to watch replication upon",
-		}),
-		&cli.StringFlag{
-			Name:  config,
-			Usage: "Optional configuration from a `YAML_FILE`",
+			Usage: "Object to watch replication upon (repeatable flag; use REPLICATION_OBJECTS env var with '|' separator for containers)",
 		},
 	}
 	app := &cli.App{
 		Name:            "openldap_exporter",
 		Usage:           "Export OpenLDAP metrics to Prometheus",
-		Before:          altsrc.InitInputSourceWithContext(flags, optionalYamlSourceFunc(config)),
 		Version:         GetVersion(),
 		HideHelpCommand: true,
 		Flags:           flags,
@@ -121,16 +114,6 @@ func main() {
 	}
 }
 
-func optionalYamlSourceFunc(flagFileName string) func(context *cli.Context) (altsrc.InputSourceContext, error) {
-	return func(c *cli.Context) (altsrc.InputSourceContext, error) {
-		filePath := c.String(flagFileName)
-		if filePath != "" {
-			return altsrc.NewYamlSourceFromFile(filePath)
-		}
-		return &altsrc.MapInputSource{}, nil
-	}
-}
-
 func runMain(c *cli.Context) error {
 	showStop = true
 
@@ -139,6 +122,18 @@ func runMain(c *cli.Context) error {
 		log.SetDefault(log.New(lh))
 	}
 	log.Info("service starting")
+
+	// Collect replication objects from CLI flags and the REPLICATION_OBJECTS env var.
+	// The env var uses '|' as separator to avoid conflicts with commas in LDAP DNs.
+	syncObjects := c.StringSlice(replicationObject)
+	if replicationEnv := os.Getenv("REPLICATION_OBJECTS"); replicationEnv != "" {
+		for _, obj := range strings.Split(replicationEnv, "|") {
+			obj = strings.TrimSpace(obj)
+			if obj != "" {
+				syncObjects = append(syncObjects, obj)
+			}
+		}
+	}
 
 	server := NewMetricsServer(
 		c.String(promAddr),
@@ -152,7 +147,7 @@ func runMain(c *cli.Context) error {
 		User: c.String(ldapUser),
 		Pass: c.String(ldapPass),
 		Tick: c.Duration(interval),
-		Sync: c.StringSlice(replicationObject),
+		Sync: syncObjects,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -198,8 +193,9 @@ const (
 	monitoredObject = "monitoredObject"
 	monitoredInfo   = "monitoredInfo"
 
-	monitorOperation   = "monitorOperation"
-	monitorOpCompleted = "monitorOpCompleted"
+	monitorOperation    = "monitorOperation"
+	monitorOpCompleted  = "monitorOpCompleted"
+	monitorOpInitiated  = "monitorOpInitiated"
 
 	monitorReplicationFilter = "contextCSN"
 	monitorReplication       = "monitorReplication"
@@ -235,6 +231,14 @@ var (
 			Subsystem: "openldap",
 			Name:      "monitor_operation",
 			Help:      help(opsBaseDN, objectClass(monitorOperation), monitorOpCompleted),
+		},
+		[]string{"dn"},
+	)
+	monitorOperationInitiatedGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Subsystem: "openldap",
+			Name:      "monitor_operation_initiated",
+			Help:      help(opsBaseDN, objectClass(monitorOperation), monitorOpInitiated),
 		},
 		[]string{"dn"},
 	)
@@ -277,7 +281,8 @@ var (
 			searchAttr:   monitoredInfo,
 			metric:       monitoredObjectGauge,
 			setData:      setValue,
-		}, {
+		},
+		{
 			baseDN:       baseDN,
 			searchFilter: objectClass(monitorCounterObject),
 			searchAttr:   monitorCounter,
@@ -294,8 +299,8 @@ var (
 		{
 			baseDN:       opsBaseDN,
 			searchFilter: objectClass(monitorOperation),
-			searchAttr:   monitorOpCompleted,
-			metric:       monitorOperationGauge,
+			searchAttr:   monitorOpInitiated,
+			metric:       monitorOperationInitiatedGauge,
 			setData:      setValue,
 		},
 	}
@@ -306,6 +311,7 @@ func init() {
 		monitoredObjectGauge,
 		monitorCounterObjectGauge,
 		monitorOperationGauge,
+		monitorOperationInitiatedGauge,
 		monitorReplicationGauge,
 		scrapeCounter,
 		bindCounter,
@@ -338,14 +344,13 @@ func setValue(entries []*ldap.Entry, q *query) {
 }
 
 type Scraper struct {
-	Net      string
-	Addr     string
-	User     string
-	Pass     string
-	Tick     time.Duration
-	LdapSync []string
-	log      *log.Logger
-	Sync     []string
+	Net  string
+	Addr string
+	User string
+	Pass string
+	Tick time.Duration
+	Sync []string
+	log  *log.Logger
 }
 
 func (s *Scraper) Start(ctx context.Context) {
@@ -353,6 +358,7 @@ func (s *Scraper) Start(ctx context.Context) {
 	s.addReplicationQueries()
 	address := fmt.Sprintf("%s://%s", s.Net, s.Addr)
 	s.log.Info("starting monitor loop", "addr", address)
+	s.checkMonitorBackend()
 	ticker := time.NewTicker(s.Tick)
 	defer ticker.Stop()
 	for {
@@ -362,6 +368,40 @@ func (s *Scraper) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// checkMonitorBackend performs a one-time base-scope search on cn=Monitor at
+// startup to verify the monitor backend is reachable. Logs a clear diagnostic
+// message if it is not, so the user knows why all subsequent scrapes will fail.
+func (s *Scraper) checkMonitorBackend() {
+	conn, err := ldap.Dial(s.Net, s.Addr)
+	if err != nil {
+		s.log.Warn("startup check: dial failed", "err", err)
+		return
+	}
+	defer conn.Close()
+
+	if s.User != "" && s.Pass != "" {
+		if err = conn.Bind(s.User, s.Pass); err != nil {
+			s.log.Warn("startup check: bind failed — monitor queries will fail", "err", err)
+			return
+		}
+	}
+
+	req := ldap.NewSearchRequest(
+		baseDN, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false,
+		"(objectClass=*)", []string{"cn"}, nil,
+	)
+	_, err = conn.Search(req)
+	if err != nil {
+		if isNoSuchObject(err) {
+			s.log.Error("startup check: cn=Monitor not found — enable the OpenLDAP monitor backend (add 'database monitor' to slapd.conf) and ensure the bind user has read access")
+		} else {
+			s.log.Warn("startup check: cn=Monitor search failed", "err", err)
+		}
+	} else {
+		s.log.Info("startup check: cn=Monitor is accessible")
 	}
 }
 
@@ -417,7 +457,7 @@ func (s *Scraper) setReplicationValue(entries []*ldap.Entry, q *query) {
 func (s *Scraper) scrape() {
 	conn, err := ldap.Dial(s.Net, s.Addr)
 	if err != nil {
-		s.log.Error("dial failed")
+		s.log.Error("dial failed", "err", err)
 		dialCounter.WithLabelValues("fail").Inc()
 		return
 	}
@@ -437,11 +477,24 @@ func (s *Scraper) scrape() {
 	scrapeRes := "ok"
 	for _, q := range queries {
 		if err = scrapeQuery(conn, q); err != nil {
-			s.log.Warn("query failed", "filter", q.searchFilter, "err", err)
+			s.log.Warn("query failed", "baseDN", q.baseDN, "filter", q.searchFilter, "err", err)
+			if isNoSuchObject(err) {
+				s.log.Warn("base DN not found — check that the OpenLDAP monitor backend is enabled and the bind user has read access", "baseDN", q.baseDN)
+			}
 			scrapeRes = "fail"
 		}
 	}
 	scrapeCounter.WithLabelValues(scrapeRes).Inc()
+}
+
+// isNoSuchObject returns true when the LDAP server responds with result code 32
+// (No Such Object), which typically means the base DN does not exist or the
+// bind user has no ACL access to it.
+func isNoSuchObject(err error) bool {
+	if ldapErr, ok := err.(*ldap.Error); ok {
+		return ldapErr.ResultCode == ldap.LDAPResultNoSuchObject
+	}
+	return false
 }
 
 func scrapeQuery(conn *ldap.Conn, q *query) error {
