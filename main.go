@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	log "log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -73,7 +75,7 @@ func main() {
 		&cli.StringFlag{
 			Name:    ldapPass,
 			Usage:   "OpenLDAP bind password (optional)",
-			EnvVars: []string{"LDAP_PASS"},
+			EnvVars: []string{"LDAP_PASS", "LDAP_PASSWORD"},
 		},
 		&cli.DurationFlag{
 			Name:    interval,
@@ -375,7 +377,7 @@ func (s *Scraper) Start(ctx context.Context) {
 // startup to verify the monitor backend is reachable. Logs a clear diagnostic
 // message if it is not, so the user knows why all subsequent scrapes will fail.
 func (s *Scraper) checkMonitorBackend() {
-	conn, err := ldap.Dial(s.Net, s.Addr)
+	conn, err := dialLDAP(s.Net, s.Addr)
 	if err != nil {
 		s.log.Warn("startup check: dial failed", "err", err)
 		return
@@ -455,7 +457,7 @@ func (s *Scraper) setReplicationValue(entries []*ldap.Entry, q *query) {
 }
 
 func (s *Scraper) scrape() {
-	conn, err := ldap.Dial(s.Net, s.Addr)
+	conn, err := dialLDAP(s.Net, s.Addr)
 	if err != nil {
 		s.log.Error("dial failed", "err", err)
 		dialCounter.WithLabelValues("fail").Inc()
@@ -485,6 +487,22 @@ func (s *Scraper) scrape() {
 		}
 	}
 	scrapeCounter.WithLabelValues(scrapeRes).Inc()
+}
+
+// dialLDAP connects to the LDAP server. addr may be a plain host:port or a
+// full URL (ldap://host:port or ldaps://host:port). For ldaps:// the connection
+// is upgraded to TLS. The net parameter is used only when addr has no scheme.
+func dialLDAP(network, addr string) (*ldap.Conn, error) {
+	if u, err := url.Parse(addr); err == nil && u.Scheme != "" {
+		host := u.Host
+		switch u.Scheme {
+		case "ldaps":
+			return ldap.DialTLS("tcp", host, &tls.Config{})
+		case "ldap":
+			return ldap.Dial("tcp", host)
+		}
+	}
+	return ldap.Dial(network, addr)
 }
 
 // isNoSuchObject returns true when the LDAP server responds with result code 32
