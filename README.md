@@ -235,6 +235,18 @@ openldap_monitored_object{dn="cn=Uptime,cn=Time,cn=Monitor"} 1.225737e+06
 
 ---
 
+## Grafana Dashboard
+
+A pre-built Grafana dashboard is included in the [`grafana/`](grafana/) directory.
+
+It covers all exporter metrics — connections, operations, threads, statistics, waiters, and exporter health — and is compatible with Grafana 12.x.
+
+**Import:** Dashboards → New → Import → Upload JSON file → select [`grafana/dashboard.json`](grafana/dashboard.json)
+
+See [`grafana/README.md`](grafana/README.md) for full import instructions, including how to publish the dashboard to grafana.com to get an importable ID.
+
+---
+
 ## Building from source
 
 1. Install [Go 1.22+](https://golang.org/)
