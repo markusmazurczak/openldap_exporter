@@ -126,48 +126,6 @@ docker build \
 
 ---
 
-## GitHub Container Registry — automated releases
-
-Container images are built automatically and published to `ghcr.io` using GitHub Actions.
-
-### Prerequisites
-
-Enable write permissions for GitHub Actions in your repository:
-**Settings → Actions → General → Workflow permissions → Read and write permissions**
-
-### Creating a release
-
-Push a tag in the format `vX.Y.Z` to trigger a build:
-
-```bash
-git tag v2.1.0
-git push origin v2.1.0
-```
-
-GitHub Actions will build and push:
-
-| Tag | Example |
-|-----|---------|
-| Full version | `ghcr.io/markusmazurczak/openldap_exporter:2.1.0` |
-| Minor version | `ghcr.io/markusmazurczak/openldap_exporter:2.1` |
-| Major version | `ghcr.io/markusmazurczak/openldap_exporter:2` |
-
-Both `linux/amd64` and `linux/arm64` platforms are built.
-
-### Manual trigger
-
-A build can also be triggered manually via **Actions → Build and Push Docker Image → Run workflow** with a custom tag name (e.g. `dev` or `test`).
-
-### Making the image public
-
-After the first build the package is private by default. To make it public:
-
-1. Go to `https://github.com/markusmazurczak?tab=packages`
-2. Select the `openldap_exporter` package
-3. **Package settings → Change visibility → Public**
-
----
-
 ## Metrics
 
 ### Collected metrics
