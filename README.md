@@ -230,6 +230,37 @@ The binary is placed in `target/openldap_exporter`.
 
 ---
 
+## Development
+
+```bash
+make test                   # go vet + go test
+golangci-lint run           # v2, same version as in CI
+tests/container-test.sh     # builds the image and checks it against a real slapd (Podman)
+```
+
+CI (`.github/workflows/build.yml`) runs lint, tests, `govulncheck`, the build and the container
+test on every push and pull request, and weekly on a schedule so new vulnerabilities surface
+without a commit. Dependabot keeps Go modules, the builder image and the actions current.
+Actions are pinned by commit SHA.
+
+## Releases
+
+A release is a tag `vMAJOR.MINOR.PATCH` on `master`. The tag triggers
+`.github/workflows/docker.yml`, which builds `Containerfile` for `linux/amd64` and `linux/arm64`
+and pushes `ghcr.io/markusmazurczak/openldap_exporter:<tag>` and `:latest`.
+
+Cut a patch release after merging dependency or base image updates, and whenever the weekly
+`govulncheck` run reports a finding that a newer Go or module version fixes:
+
+```bash
+git tag -a v2.1.1 -m "v2.1.1: <summary>" && git push origin v2.1.1
+```
+
+Metric names and labels are part of the interface (dashboards, alerts): renaming one is a
+breaking change.
+
+---
+
 ## License
 
 See [LICENSE.md](LICENSE.md).

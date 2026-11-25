@@ -1,7 +1,6 @@
 # openldap-exporter: static Go binary on scratch (no shell, no package manager).
-# BASE is pinned by digest; a rebuild on a newer base passes it via --build-arg BASE=...
-ARG BASE=docker.io/library/golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
-FROM ${BASE} AS build
+# The builder is pinned by tag and digest; Dependabot proposes updates (.github/dependabot.yml).
+FROM docker.io/library/golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
