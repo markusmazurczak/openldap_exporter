@@ -114,7 +114,9 @@ func TestHealthcheck(t *testing.T) {
 	}
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	_, closedPort, _ := net.SplitHostPort(l.Addr().String())
-	l.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := healthcheck(":"+closedPort, "/metrics", time.Second); err == nil {
 		t.Error("closed port must be an error")
 	}

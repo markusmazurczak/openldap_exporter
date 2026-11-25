@@ -154,7 +154,7 @@ func (s *Scraper) checkMonitorBackend() {
 		s.log.Warn("startup check: dial failed", "err", err)
 		return
 	}
-	defer conn.Close()
+	defer closeConn(conn, s.log)
 	if s.User != "" && s.Pass != "" {
 		if err = conn.Bind(s.User, s.Pass); err != nil {
 			s.log.Warn("startup check: bind failed — monitor queries will fail", "err", err)
@@ -220,7 +220,7 @@ func (s *Scraper) scrape(ctx context.Context) {
 		return
 	}
 	dialCounter.WithLabelValues("ok").Inc()
-	defer conn.Close()
+	defer closeConn(conn, s.log)
 
 	if s.User != "" && s.Pass != "" {
 		if err = conn.Bind(s.User, s.Pass); err != nil {
@@ -245,6 +245,14 @@ func (s *Scraper) scrape(ctx context.Context) {
 		}
 	}
 	scrapeCounter.WithLabelValues(result).Inc()
+}
+
+// closeConn closes an LDAP connection; a failed close is logged, not fatal (the scrape
+// result is already counted).
+func closeConn(conn *ldap.Conn, log *slog.Logger) {
+	if err := conn.Close(); err != nil {
+		log.Debug("closing LDAP connection failed", "err", err)
+	}
 }
 
 func scrapeQuery(conn *ldap.Conn, q *query) error {

@@ -49,7 +49,9 @@ func showVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintln(w, GetVersion())
+	if _, err := fmt.Fprintln(w, GetVersion()); err != nil {
+		slog.Debug("writing version response failed", "err", err)
+	}
 }
 
 func (s *Server) Start() error {
@@ -81,9 +83,9 @@ func healthcheck(bindAddr, metricsPath string, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	closeErr := resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("metrics endpoint returned %s", resp.Status)
 	}
-	return nil
+	return closeErr
 }
