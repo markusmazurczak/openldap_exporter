@@ -245,16 +245,26 @@ Actions are pinned by commit SHA.
 
 ## Releases
 
-A release is a tag `vMAJOR.MINOR.PATCH` on `master`. The tag triggers
-`.github/workflows/docker.yml`, which builds `Containerfile` for `linux/amd64` and `linux/arm64`
-and pushes `ghcr.io/markusmazurczak/openldap_exporter:<tag>` and `:latest`.
+A release is a tag `vMAJOR.MINOR.PATCH` on `master` with a GitHub release and the image
+`ghcr.io/markusmazurczak/openldap_exporter:<tag>` (also `:latest`), built from `Containerfile`
+for `linux/amd64` and `linux/arm64`.
 
-Cut a patch release after merging dependency or base image updates, and whenever the weekly
-`govulncheck` run reports a finding that a newer Go or module version fixes:
+Changes reach `master` through pull requests; the required checks are the `build` and
+`container-test` jobs. Every merged pull request is released automatically by
+`.github/workflows/release.yml`. The bump follows the pull request:
 
-```bash
-git tag -a v2.1.1 -m "v2.1.1: <summary>" && git push origin v2.1.1
-```
+| Pull request                                            | Bump       |
+|---------------------------------------------------------|------------|
+| label `release:skip`                                    | no release |
+| label `release:major`, `release:minor`, `release:patch` | that bump  |
+| title `type!: …` / `type(scope)!: …`                    | major      |
+| title `feat: …` / `feat(scope): …`                      | minor      |
+| anything else (`fix:`, `chore(deps):`, …)               | patch      |
+
+When the weekly `govulncheck` run reports a finding that a newer Go or module version fixes,
+the update goes through a pull request like any other change. A tag pushed by hand
+(`git tag -a vX.Y.Z -m … && git push origin vX.Y.Z`) still builds the image through
+`.github/workflows/docker.yml`.
 
 Metric names and labels are part of the interface (dashboards, alerts): renaming one is a
 breaking change.

@@ -1,5 +1,5 @@
 # Keeps Go modules, the builder image and the GitHub Actions current.
-# A merged update reaches users with the next release tag (see README "Releases").
+# A merged update is released automatically (see README "Releases").
 version: 2
 updates:
   - package-ecosystem: gomod
