@@ -1,0 +1,105 @@
+name: release
+
+# A merged pull request on master becomes a release: tag, GitHub release and container image.
+# Direct pushes to master (no merged pull request) do not release.
+#
+# Version bump, from the pull request:
+#   label release:skip                       -> no release
+#   label release:major|minor|patch          -> that bump
+#   title "type!: ..." or "type(scope)!: ..." -> major
+#   title "feat: ..." / "feat(scope): ..."   -> minor
+#   anything else                            -> patch
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create tag and release
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Find the merged pull request
+        id: pr
+        run: |
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "master")][0] // empty')
+          if [ -z "$pr" ]; then
+            echo "No merged pull request for $GITHUB_SHA: no release."
+            exit 0
+          fi
+          {
+            echo "number=$(jq -r .number <<<"$pr")"
+            echo "title<<EOF"
+            jq -r .title <<<"$pr"
+            echo "EOF"
+            echo "labels=$(jq -r '[.labels[].name] | join(",")' <<<"$pr")"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Determine the next version
+        id: version
+        if: steps.pr.outputs.number != ''
+        env:
+          NUMBER: ${{ steps.pr.outputs.number }}
+          TITLE: ${{ steps.pr.outputs.title }}
+          LABELS: ${{ steps.pr.outputs.labels }}
+        run: |
+          has_label() { [[ ",$LABELS," == *",$1,"* ]]; }
+          if has_label release:skip; then
+            echo "Label release:skip: no release."
+            exit 0
+          fi
+          if   has_label release:major; then bump=major
+          elif has_label release:minor; then bump=minor
+          elif has_label release:patch; then bump=patch
+          elif [[ "$TITLE" =~ ^[a-z]+(\([^\)]*\))?!: ]]; then bump=major
+          elif [[ "$TITLE" =~ ^feat(\([^\)]*\))?: ]]; then bump=minor
+          else bump=patch
+          fi
+
+          latest=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          if [ -z "$latest" ]; then
+            echo "::error::No vMAJOR.MINOR.PATCH tag found to bump from"
+            exit 1
+          fi
+          IFS=. read -r major minor patch <<<"${latest#v}"
+          case $bump in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          tag="v$major.$minor.$patch"
+          echo "$latest -> $tag ($bump, PR #$NUMBER)"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+      - name: Create tag and release
+        if: steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$TAG" --generate-notes --latest
+
+  # A tag created with GITHUB_TOKEN does not trigger docker.yml, so the image is built here.
+  image:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      release_tag: ${{ needs.release.outputs.tag }}
