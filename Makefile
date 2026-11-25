@@ -8,8 +8,12 @@ OUTFILE ?= openldap_exporter
 .PHONY: precommit
 precommit: clean format lint compile
 
+.PHONY: test
+test:
+	go vet ./... && go test ./...
+
 .PHONY: build
-build: clean compile
+build: clean test compile
 
 .PHONY: commit
 commit: clean cross-compile
@@ -24,7 +28,7 @@ target:
 
 .PHONY: format
 format:
-	goimports -w main.go
+	goimports -w .
 
 .PHONY: lint
 lint:
@@ -32,7 +36,7 @@ lint:
 
 .PHONY: compile
 compile: target
-	go build -ldflags "${LDFLAGS}" -o target/${OUTFILE} main.go
+	go build -trimpath -ldflags "${LDFLAGS}" -o target/${OUTFILE} .
 	gzip -c < target/${OUTFILE} > target/${OUTFILE}.gz
 
 .PHONY: cross-compile

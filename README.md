@@ -11,6 +11,9 @@ Key differences from upstream:
 - **Container image** — multi-arch Docker image (`linux/amd64`, `linux/arm64`) published to GitHub Container Registry
 - **Extended metrics** — `monitorOpInitiated` tracked alongside `monitorOpCompleted` for all LDAP operations
 - **Improved diagnostics** — startup check for `cn=Monitor` accessibility with clear error messages
+- **Minimal, hardened image** — static binary on `scratch` (no shell, no package manager), runs as UID 65534, current Go toolchain
+- **Built-in health check** — `openldap-exporter --healthcheck` probes the local metrics endpoint, so container health checks need no shell or `wget`
+- **Maintained dependencies** — `github.com/go-ldap/ldap/v3` (replaces the archived `gopkg.in/ldap.v2`), timeouts for LDAP and HTTP, TLS 1.2+ with server name verification for `ldaps://`
 
 ---
 
@@ -58,12 +61,11 @@ All configuration is done exclusively via environment variables or command-line 
 | `PROM_ADDR`            | `--promAddr`      | `:9330`          | Bind address for the Prometheus HTTP metrics server               |
 | `METRICS_PATH`         | `--metrPath`      | `/metrics`       | HTTP path to expose metrics on                                    |
 | `LDAP_NET`             | `--ldapNet`       | `tcp`            | Network type: `tcp` or `unix`                                     |
-| `LDAP_ADDR`            | `--ldapAddr`      | `localhost:389`  | OpenLDAP server address and port                                  |
+| `LDAP_ADDR`            | `--ldapAddr`      | `localhost:389`  | `host:port`, or an `ldap://`, `ldaps://` or `ldapi://` URL        |
 | `LDAP_USER`            | `--ldapUser`      | *(empty)*        | Bind DN for LDAP authentication (optional)                        |
 | `LDAP_PASS`            | `--ldapPass`      | *(empty)*        | Bind password (optional)                                          |
 | `INTERVAL`             | `--interval`      | `30s`            | Scrape interval, e.g. `15s`, `1m`                                 |
 | `JSON_LOG`             | `--jsonLog`       | `false`          | Set to `true` for JSON-formatted log output                       |
-| `WEB_CFG_FILE`         | `--webCfgFile`    | *(empty)*        | Path to a Prometheus web config file for TLS/auth (optional)      |
 | `REPLICATION_OBJECTS`  | `--replicationObject` | *(empty)*   | LDAP DNs to monitor for replication — see note below             |
 
 ### Replication monitoring
@@ -82,17 +84,26 @@ openldap_exporter \
   --replicationObject "dc=other,dc=org"
 ```
 
-### TLS / web config
+### Metrics endpoint security
 
-Mount a [Prometheus web config file](https://prometheus.io/docs/prometheus/latest/configuration/https/) and reference it via `WEB_CFG_FILE`:
+The metrics endpoint serves plain HTTP. Run the exporter on an internal network (for example
+the network Prometheus scrapes from) or behind a reverse proxy that adds TLS and
+authentication.
+
+Support for a Prometheus web config file (`WEB_CFG_FILE`) was removed in November 2026 together
+with the `exporter-toolkit` dependency. If `WEB_CFG_FILE` is still set, the exporter refuses to
+start rather than serving metrics without the protection the file was meant to add.
+
+To reach OpenLDAP over TLS, use an `ldaps://` address, e.g. `LDAP_ADDR=ldaps://ldap.example.com:636`.
+
+### Health check
 
 ```bash
-docker run -d \
-  -v /etc/openldap_exporter/web.yml:/etc/web.yml:ro \
-  -e WEB_CFG_FILE=/etc/web.yml \
-  -e LDAP_ADDR=ldap.example.com:636 \
-  ghcr.io/markusmazurczak/openldap_exporter:latest
+openldap-exporter --healthcheck   # exit 0 if the local metrics endpoint answers with 200
 ```
+
+It reads the same `PROM_ADDR` and `METRICS_PATH` as the server. Example for Podman/Docker:
+`--health-cmd '["/openldap-exporter", "--healthcheck"]'`.
 
 ---
 
@@ -118,7 +129,7 @@ services:
 ### Build locally
 
 ```bash
-docker build \
+docker build -f Containerfile \
   --build-arg GIT_TAG=$(git describe --tags 2>/dev/null || echo dev) \
   --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
   -t openldap_exporter:local .
@@ -207,12 +218,12 @@ See [`grafana/README.md`](grafana/README.md) for full import instructions, inclu
 
 ## Building from source
 
-1. Install [Go 1.22+](https://golang.org/)
+1. Install Go (the version in [`go.mod`](go.mod) or newer)
 2. Clone this repository
-3. Build:
+3. Test and build:
 
 ```bash
-make build
+make build      # runs go vet and go test first
 ```
 
 The binary is placed in `target/openldap_exporter`.
